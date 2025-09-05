@@ -135,19 +135,14 @@ void digest(u32 hash[HASH_LEN])
             cur = getchar();
             if (cur == EOF)
             {
+                buf[i] |= 0x80 << shift;
+                done = 2;
                 if (i < (BLOCK_WORDS - 1))
-                {
                     // the full padding can fit in this block
-                    done = 2;
-                    buf[i] |= 0x80 << shift;
                     buf[15] = len * 8;
-                }
                 else
-                {
-                    done = 1;
                     // only the end bit and maybe some zeros fit
-                    buf[i] |= 0x80 << shift;
-                }
+                    done--;
 
                 break;
             }
