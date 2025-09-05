@@ -3,13 +3,17 @@
 #include <string.h>
 #include <unistd.h>
 
+#if (defined(__GNUC__) && !defined(__clang__))
+// annoyingly needed to keep GCC from complaining about
+// memset-ting only part of the buffer when certain compile
+// flags are passed
 #pragma GCC diagnostic ignored "-Wmemset-elt-size"
+#endif
 
 typedef uint32_t u32;
 typedef uint8_t u8;
 
 #define HASH_LEN 8
-#define BLOCK_BYTES 64
 #define BLOCK_WORDS 16
 #define BUF_WORDS 64
 
@@ -117,7 +121,7 @@ static u32 K[64] = {
     0xc67178f2,
 };
 
-void digest(u32 hash[HASH_LEN])
+void hash(u32 digest[HASH_LEN])
 {
     int cur;
     u32 i, shift;
@@ -128,7 +132,7 @@ void digest(u32 hash[HASH_LEN])
 
     while (!done)
     {
-        memset(buf, 0, BLOCK_BYTES);
+        memset(buf, 0, sizeof(*buf) * BLOCK_WORDS);
 
         shift = 24;
         for (i = 0; i < BLOCK_WORDS; len++)
@@ -170,14 +174,14 @@ void digest(u32 hash[HASH_LEN])
         }
 
         // initialize working variables
-        a = hash[0];
-        b = hash[1];
-        c = hash[2];
-        d = hash[3];
-        e = hash[4];
-        f = hash[5];
-        g = hash[6];
-        h = hash[7];
+        a = digest[0];
+        b = digest[1];
+        c = digest[2];
+        d = digest[3];
+        e = digest[4];
+        f = digest[5];
+        g = digest[6];
+        h = digest[7];
 
         for (i = 0; i < BUF_WORDS; i++)
         {
@@ -193,20 +197,20 @@ void digest(u32 hash[HASH_LEN])
             a = t1 + t2;
         }
 
-        hash[0] += a;
-        hash[1] += b;
-        hash[2] += c;
-        hash[3] += d;
-        hash[4] += e;
-        hash[5] += f;
-        hash[6] += g;
-        hash[7] += h;
+        digest[0] += a;
+        digest[1] += b;
+        digest[2] += c;
+        digest[3] += d;
+        digest[4] += e;
+        digest[5] += f;
+        digest[6] += g;
+        digest[7] += h;
 
         if (done == 1)
         {
             // set up the final block
             done = 2;
-            memset(buf, 0, BLOCK_BYTES);
+            memset(buf, 0, sizeof(*buf) * BLOCK_WORDS);
             // the end bit has already been written to the previous block
             buf[15] = len * 8;
             goto finish;
@@ -217,23 +221,23 @@ void digest(u32 hash[HASH_LEN])
 
 int main(int argc, char *argv[])
 {
-    u32 hash[HASH_LEN] = {0x6a09e667,
-                          0xbb67ae85,
-                          0x3c6ef372,
-                          0xa54ff53a,
-                          0x510e527f,
-                          0x9b05688c,
-                          0x1f83d9ab,
-                          0x5be0cd19};
+    u32 digest[HASH_LEN] = {0x6a09e667,
+                            0xbb67ae85,
+                            0x3c6ef372,
+                            0xa54ff53a,
+                            0x510e527f,
+                            0x9b05688c,
+                            0x1f83d9ab,
+                            0x5be0cd19};
     char res[(HASH_LEN * 8) + 1];
     int n = 0;
     int i = 0;
     int ok = 0;
 
-    digest(hash);
+    hash(digest);
 
     for (i = 0; i < HASH_LEN; i++)
-        n += snprintf(&res[n], 9, "%08x", hash[i]);
+        n += snprintf(&res[n], 9, "%08x", digest[i]);
 
     printf("%s", res);
 
