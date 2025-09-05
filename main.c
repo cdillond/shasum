@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #pragma GCC diagnostic ignored "-Wmemset-elt-size"
 
@@ -239,7 +240,10 @@ int main(int argc, char *argv[])
     if (argc > 1)
     {
         ok = strcmp(argv[1], res);
-        printf(" %s", ok == 0 ? "OK" : "BAD");
+        if (isatty(1))
+            printf(" %s", ok == 0 ? "\033[32mOK\033[0m" : "\033[31mBAD\033[0m");
+        else
+            printf(" %s", ok == 0 ? "OK" : "BAD");
     }
 
     printf("\n");
