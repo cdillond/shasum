@@ -1,38 +1,20 @@
 #include <stdint.h>
 #include <stdio.h>
-#include <errno.h>
 #include <string.h>
-#include <byteswap.h>
+
+#pragma GCC diagnostic ignored "-Wmemset-elt-size"
 
 typedef uint32_t u32;
-typedef uint16_t u16;
 typedef uint8_t u8;
 
+#define HASH_LEN 8
 #define BLOCK_BYTES 64
+#define BLOCK_WORDS 16
 #define BUF_WORDS 64
-#define BUF_MAX (64 - 8)
-#define BUF_BYTES 256
 
-union buffer
-{
-    u8 bytes[256];
-    u32 words[64];
-};
+// functions described in RFC6234
 
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-
-#define BYTE_TO_BINARY(byte)         \
-    ((byte) & 0x80 ? '1' : '0'),     \
-        ((byte) & 0x40 ? '1' : '0'), \
-        ((byte) & 0x20 ? '1' : '0'), \
-        ((byte) & 0x10 ? '1' : '0'), \
-        ((byte) & 0x08 ? '1' : '0'), \
-        ((byte) & 0x04 ? '1' : '0'), \
-        ((byte) & 0x02 ? '1' : '0'), \
-        ((byte) & 0x01 ? '1' : '0')
-
-static u32
-ch(u32 x, u32 y, u32 z)
+static u32 ch(u32 x, u32 y, u32 z)
 {
     return (x & y) ^ ((~x) & z);
 }
@@ -42,15 +24,9 @@ static u32 maj(u32 x, u32 y, u32 z)
     return (x & y) ^ (x & z) ^ (y & z);
 }
 
-/* n must be < 32 */
-static u32 rotl(u32 x, u32 n)
-{
-    return (x << n) | (x >> ((-n) & 31));
-}
-
 static u32 rotr(u32 x, u32 n)
 {
-    return (x >> n) | (x << (32 - n));
+    return (x >> n) | (x << ((-n) & 31));
 }
 
 static u32 bsig0(u32 x)
@@ -140,133 +116,76 @@ static u32 K[64] = {
     0xc67178f2,
 };
 
-void print_word(u32 pre, u32 *W)
+void digest(u32 hash[HASH_LEN])
 {
-    u32 be = bswap_32(*W);
-    u8 *w = (u8 *)&be;
-    printf("%02d  ", pre);
-
-    printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((*w)));
-    printf(" ");
-
-    printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[1])));
-    printf(" ");
-
-    printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[2])));
-    printf(" ");
-
-    printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[3])));
-
-    printf("\n");
-}
-
-void print_bits(u8 w[BUF_BYTES])
-{
-    u32 i;
-    for (i = 0; i < BUF_BYTES; i += 4)
-    {
-        printf("%02d  ", i / 4);
-
-        printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[i])));
-        printf(" ");
-
-        printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[i + 1])));
-        printf(" ");
-
-        printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[i + 2])));
-        printf(" ");
-
-        printf(BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY((w[i + 3])));
-
-        printf("\n");
-    }
-}
-
-int digest(u32 arr[8], const u8 *restrict src, u32 len)
-{
-
-    u32 i, n, t, t1, t2;
-    u32 a, b, c, d, e, f, g, h;
-    u32 H[8] = {
-        0x6a09e667,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19};
-
-    union buffer buf;
-    u8 *ptr;
+    int cur;
+    u32 i, shift;
+    u32 a, b, c, d, e, f, g, h, t1, t2;
     u32 done = 0;
-    n = 0;
+    u32 len = 0;
+    u32 buf[BUF_WORDS];
 
     while (!done)
     {
-        ptr = buf.bytes;
-        /* copy int buf, assuming it all fits; all message block bits are big endian */
-        for (i = 0; i < BLOCK_BYTES && n < len; i++)
-            *ptr++ = src[n++];
+        memset(buf, 0, BLOCK_BYTES);
 
-        if (n == len)
+        shift = 24;
+        for (i = 0; i < BLOCK_WORDS; len++)
         {
-            if ((n & 63) < (64 - 5))
+            cur = getchar();
+            if (cur == EOF)
             {
-                done = 1;
-                *ptr++ = 0x80;
-                n++;
-                for (; (n & 63) < (BLOCK_BYTES - sizeof(u32)); n++)
-                    *ptr++ = 0;
+                if (i < (BLOCK_WORDS - 1))
+                {
+                    // the full padding can fit in this block
+                    done = 2;
+                    buf[i] |= 0x80 << shift;
+                    buf[15] = len * 8;
+                }
+                else
+                {
+                    done = 1;
+                    // only the end bit and maybe some zeros fit
+                    buf[i] |= 0x80 << shift;
+                }
 
-                /* convert back to native endian */
-                for (i = 0; i < 15; i++)
-                    buf.words[i] = bswap_32(buf.words[i]);
+                break;
+            }
 
-                buf.words[15] = len * 8;
+            buf[i] |= (u32)(cur) << shift;
+
+            if (shift == 0)
+            {
+                i++;
+                shift = 24;
             }
             else
-            {
-                /* buffer has nearly been filled, but no room for len */
-                *ptr++ = 0x80;
-                n++;
-
-                for (; (n & 63) != 0; n++)
-                    *ptr++ = 0;
-
-                /* convert back to native endian */
-                for (i = 0; i < 16; i++)
-                    buf.words[i] = bswap_32(buf.words[i]);
-            }
-        }
-        else
-        {
-            /* buffer has been filled */
-            for (i = 0; i < 16; i++)
-                buf.words[i] = bswap_32(buf.words[i]);
+                shift -= 8;
         }
 
+    finish:
         for (i = 16; i < BUF_WORDS; i++)
         {
-            buf.words[i] =
-                ssig1(buf.words[i - 2]) +
-                buf.words[i - 7] +
-                ssig0(buf.words[i - 15]) +
-                buf.words[i - 16];
+            buf[i] =
+                ssig1(buf[i - 2]) +
+                buf[i - 7] +
+                ssig0(buf[i - 15]) +
+                buf[i - 16];
         }
 
-        a = H[0];
-        b = H[1];
-        c = H[2];
-        d = H[3];
-        e = H[4];
-        f = H[5];
-        g = H[6];
-        h = H[7];
+        // initialize working variables
+        a = hash[0];
+        b = hash[1];
+        c = hash[2];
+        d = hash[3];
+        e = hash[4];
+        f = hash[5];
+        g = hash[6];
+        h = hash[7];
 
-        for (t = 0; t < 64; t++)
+        for (i = 0; i < BUF_WORDS; i++)
         {
-            t1 = h + bsig1(e) + ch(e, f, g) + K[t] + buf.words[t];
+            t1 = h + bsig1(e) + ch(e, f, g) + K[i] + buf[i];
             t2 = bsig0(a) + maj(a, b, c);
             h = g;
             g = f;
@@ -278,40 +197,57 @@ int digest(u32 arr[8], const u8 *restrict src, u32 len)
             a = t1 + t2;
         }
 
-        H[0] += a;
-        H[1] += b;
-        H[2] += c;
-        H[3] += d;
-        H[4] += e;
-        H[5] += f;
-        H[6] += g;
-        H[7] += h;
+        hash[0] += a;
+        hash[1] += b;
+        hash[2] += c;
+        hash[3] += d;
+        hash[4] += e;
+        hash[5] += f;
+        hash[6] += g;
+        hash[7] += h;
+
+        if (done == 1)
+        {
+            // set up the final block
+            done = 2;
+            memset(buf, 0, BLOCK_BYTES);
+            // the end bit has already been written to the previous block
+            buf[15] = len * 8;
+            goto finish;
+        }
     }
-
-    arr[0] = H[0];
-    arr[1] = H[1];
-    arr[2] = H[2];
-    arr[3] = H[3];
-    arr[4] = H[4];
-    arr[5] = H[5];
-    arr[6] = H[6];
-    arr[7] = H[7];
-
-    return 0;
+    return;
 }
 
 int main(int argc, char *argv[])
 {
-    u32 arr[8];
-    u8 *msg = (argc > 1) ? argv[1] : argv[0];
+    u32 hash[HASH_LEN] = {0x6a09e667,
+                          0xbb67ae85,
+                          0x3c6ef372,
+                          0xa54ff53a,
+                          0x510e527f,
+                          0x9b05688c,
+                          0x1f83d9ab,
+                          0x5be0cd19};
+    char res[(HASH_LEN * 8) + 1];
+    int n = 0;
+    int i = 0;
+    int ok = 0;
 
-    digest(arr, msg, strlen(msg));
+    digest(hash);
 
-    for (int i = 0; i < 8; i++)
+    for (i = 0; i < HASH_LEN; i++)
+        n += snprintf(&res[n], 9, "%08x", hash[i]);
+
+    printf("%s", res);
+
+    if (argc > 1)
     {
-        printf("%08x", arr[i]);
+        ok = strcmp(argv[1], res);
+        printf(" %s", ok == 0 ? "OK" : "BAD");
     }
+
     printf("\n");
 
-    return 0;
+    return ok;
 }
