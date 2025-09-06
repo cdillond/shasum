@@ -7,10 +7,10 @@ I wrote this to learn more about the SHA 2 algorithm and to improve the ergonomi
 To generate the hash of a file, redirect the file to stdin.
 ```bash
 $ ./a.out < main.c
-81143142f44bbe7902a918ef187a27323f119f41325ab9011da3fc95e21e0036
+76df6a480a8a1cdd2e62375757fa892fa6e307b0e0fffbff43ab19a1cf84fc46
 ```
 To check the hash of a file against a known hash, pass the known hash as an argument.
 ```bash
-$ ./a.out 81143142f44bbe7902a918ef187a27323f119f41325ab9011da3fc95e21e0036 < main.c
-81143142f44bbe7902a918ef187a27323f119f41325ab9011da3fc95e21e0036 OK
+$ ./a.out 76df6a480a8a1cdd2e62375757fa892fa6e307b0e0fffbff43ab19a1cf84fc46 < main.c
+76df6a480a8a1cdd2e62375757fa892fa6e307b0e0fffbff43ab19a1cf84fc46 OK
 ```

@@ -16,6 +16,7 @@ typedef uint8_t u8;
 #define HASH_LEN 8
 #define BLOCK_WORDS 16
 #define BUF_WORDS 64
+#define STR_BUF_LEN 65
 
 // functions described in RFC6234
 
@@ -122,34 +123,29 @@ static u32 K[64] = {
 };
 
 // read_block reads the message from stdin to buf. The
-// return value is the new total length of the message,
-// which is equal to the len argument plus the number of
-// new bytes read. If EOF is encountered, *done is updated
+// return value is the number of message bits read.
+// If EOF is encountered, *done is updated
 // to -1 if the padding requirements necessitate another
 // block and 1 if the padding was written to the current
 // block.
-u32 read_block(u32 buf[BUF_WORDS], u32 len, int *done)
+static u32 read_block(u32 buf[BUF_WORDS], int *done)
 {
-    int i, c;
+    u32 bytes = 0;
     int shift = 24;
+    int i, c;
 
     memset(buf, 0, sizeof(*buf) * BLOCK_WORDS);
 
-    for (i = 0; i < BLOCK_WORDS; len++)
+    for (i = 0; i < BLOCK_WORDS; bytes++)
     {
         c = getchar();
         if (c == EOF)
         {
             buf[i] |= 0x80 << shift;
 
-            if (i == (BLOCK_WORDS - 1))
-                *done = -1;
-            else
-            {
-                buf[15] = len * 8;
-                *done = 1;
-            }
-            break;
+            *done = (i < BLOCK_WORDS - 1) ? 1 : -1;
+
+            return bytes * 8;
         }
 
         buf[i] |= (u32)(c) << shift;
@@ -157,13 +153,16 @@ u32 read_block(u32 buf[BUF_WORDS], u32 len, int *done)
         if (shift != 0)
             shift -= 8;
         else
-            shift = 24, i++;
+        {
+            shift = 24;
+            i++;
+        }
     }
 
-    return len;
+    return bytes * 8;
 }
 
-void scramble(u32 digest[HASH_LEN], u32 buf[BUF_WORDS])
+static void scramble(u32 digest[restrict HASH_LEN], u32 buf[restrict BUF_WORDS])
 {
     u32 i, a, b, c, d, e, f, g, h, t1, t2;
 
@@ -203,24 +202,45 @@ void scramble(u32 digest[HASH_LEN], u32 buf[BUF_WORDS])
     digest[7] += h;
 }
 
+static void init_hash(u32 digest[HASH_LEN])
+{
+    digest[0] = 0x6a09e667;
+    digest[1] = 0xbb67ae85;
+    digest[2] = 0x3c6ef372;
+    digest[3] = 0xa54ff53a;
+    digest[4] = 0x510e527f;
+    digest[5] = 0x9b05688c;
+    digest[6] = 0x1f83d9ab;
+    digest[7] = 0x5be0cd19;
+}
+
 void hash(u32 digest[HASH_LEN])
 {
     int done = 0;
-    u32 len = 0;
+    u32 bits = 0;
     u32 buf[BUF_WORDS];
+
+    init_hash(digest);
 
     while (!done)
     {
-        len = read_block(buf, len, &done);
+        bits += read_block(buf, &done);
+
+        if (done == 1)
+            buf[BLOCK_WORDS - 1] = bits;
+
         scramble(digest, buf);
     }
 
+    // process an additional block if the current block
+    // contains the end bit but didn't have enough
+    // room for the len bits.
     if (done == -1)
     {
-        // process the final block
         memset(buf, 0, sizeof(*buf) * BLOCK_WORDS);
-        // the end bit was written to the previous block
-        buf[15] = len * 8;
+
+        buf[BLOCK_WORDS - 1] = bits;
+
         scramble(digest, buf);
     }
 
@@ -229,24 +249,13 @@ void hash(u32 digest[HASH_LEN])
 
 int main(int argc, char *argv[])
 {
-    u32 digest[HASH_LEN] = {
-        0x6a09e667,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
-    };
-    char res[(HASH_LEN * 8) + 1];
-    int n = 0;
-    int i = 0;
-    int ok = 0;
+    int n = 0, i = 0, ok = 0;
+    u32 digest[HASH_LEN];
+    char res[STR_BUF_LEN];
 
     hash(digest);
 
-    for (i = 0; i < HASH_LEN; i++)
+    for (i = 0; i < HASH_LEN && n < STR_BUF_LEN; i++)
         n += snprintf(&res[n], 9, "%08x", digest[i]);
 
     printf("%s", res);
