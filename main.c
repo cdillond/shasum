@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,13 +11,18 @@
 #pragma GCC diagnostic ignored "-Wmemset-elt-size"
 #endif
 
-typedef uint32_t u32;
 typedef uint8_t u8;
+typedef uint32_t u32;
+typedef uint64_t u64;
 
+#define LEN(ARR) (sizeof(ARR) / sizeof(*ARR))
 #define HASH_LEN 8
 #define BLOCK_WORDS 16
 #define BUF_WORDS 64
 #define STR_BUF_LEN 65
+// number of chars, including the null terminator,
+// in a hex string representation of a u32
+#define HEX_U32_LEN 9
 
 // functions described in RFC6234
 
@@ -55,7 +61,7 @@ static u32 ssig1(u32 x)
     return rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10);
 }
 
-static u32 K[64] = {
+static const u32 K[64] = {
     0x428a2f98,
     0x71374491,
     0xb5c0fbcf,
@@ -128,9 +134,9 @@ static u32 K[64] = {
 // to -1 if the padding requirements necessitate another
 // block and 1 if the padding was written to the current
 // block.
-static u32 read_block(u32 buf[BUF_WORDS], int *done)
+static u64 read_block(u32 buf[BUF_WORDS], int *done)
 {
-    u32 bytes = 0;
+    u64 bytes = 0;
     int shift = 24;
     int i, c;
 
@@ -143,7 +149,7 @@ static u32 read_block(u32 buf[BUF_WORDS], int *done)
         {
             buf[i] |= 0x80 << shift;
 
-            *done = (i < BLOCK_WORDS - 1) ? 1 : -1;
+            *done = (i < BLOCK_WORDS - 2) ? 1 : -1;
 
             return bytes * 8;
         }
@@ -217,7 +223,7 @@ static void init_hash(u32 digest[HASH_LEN])
 void hash(u32 digest[HASH_LEN])
 {
     int done = 0;
-    u32 bits = 0;
+    u64 bits = 0;
     u32 buf[BUF_WORDS];
 
     init_hash(digest);
@@ -227,7 +233,10 @@ void hash(u32 digest[HASH_LEN])
         bits += read_block(buf, &done);
 
         if (done == 1)
-            buf[BLOCK_WORDS - 1] = bits;
+        {
+            buf[BLOCK_WORDS - 2] = (u32)(bits >> 32);
+            buf[BLOCK_WORDS - 1] = (u32)(bits & (u32)(~0));
+        }
 
         scramble(digest, buf);
     }
@@ -239,7 +248,8 @@ void hash(u32 digest[HASH_LEN])
     {
         memset(buf, 0, sizeof(*buf) * BLOCK_WORDS);
 
-        buf[BLOCK_WORDS - 1] = bits;
+        buf[BLOCK_WORDS - 2] = (u32)(bits >> 32);
+        buf[BLOCK_WORDS - 1] = (u32)(bits & (u32)(~0));
 
         scramble(digest, buf);
     }
@@ -249,27 +259,29 @@ void hash(u32 digest[HASH_LEN])
 
 int main(int argc, char *argv[])
 {
-    int n = 0, i = 0, ok = 0;
+    int res = 0;
+    size_t n = 0;
+    size_t i = 0;
     u32 digest[HASH_LEN];
-    char res[STR_BUF_LEN];
+    char hex[STR_BUF_LEN];
 
     hash(digest);
 
-    for (i = 0; i < HASH_LEN && n < STR_BUF_LEN; i++)
-        n += snprintf(&res[n], 9, "%08x", digest[i]);
+    for (i = 0; i < LEN(digest) && n < LEN(hex) - HEX_U32_LEN + 1; i++)
+        n += snprintf(&hex[n], HEX_U32_LEN, "%08x", digest[i]);
 
-    printf("%s", res);
+    printf("%s", hex);
 
     if (argc > 1)
     {
-        ok = strcmp(argv[1], res);
+        res = strcmp(argv[1], hex);
         if (isatty(1))
-            printf(" %s", ok == 0 ? "\033[32mOK\033[0m" : "\033[31mBAD\033[0m");
+            printf(" %s", res == 0 ? "\033[32mOK\033[0m" : "\033[31mBAD\033[0m");
         else
-            printf(" %s", ok == 0 ? "OK" : "BAD");
+            printf(" %s", res == 0 ? "OK" : "BAD");
     }
 
     printf("\n");
 
-    return ok;
+    return res;
 }
